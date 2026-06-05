@@ -83,6 +83,8 @@ _WINDOW_BLACKLIST = [
 ```
 往里加自己的关键词（小写大写都行，模糊匹配）。`--auto-window` 切到匹配的窗口时直接 skip 那一轮，浮窗显示橙色 "🔒 黑名单"。
 
+**窄门 default（v2 加，6/5）**：当你用 `-w "DDLC"` 指定窗口时，意思是"我只让 AI 看 DDLC，别的别给"。所以**找不到 DDLC 窗口（你切走了 / 关了）时 gaze 直接 skip 那一帧、不会 fallback 全屏乱截桌面**。`--auto-window` 检测不到前台窗口（停在桌面 / 锁屏）也是同样处理。想回旧的"找不到就全屏"行为：启动加 `--allow-fullscreen-fallback`。
+
 另外还有 `_CONSOLE_NOISE_PATTERNS`（在约 230 行）—— 这个是过滤命令行/代码/python.exe 误截到的开发环境噪音，一般不用改。
 
 **所有 CLI flag**：跑 `python gaze/gaze_local.py --help` 看。常用的：
@@ -97,6 +99,7 @@ _WINDOW_BLACKLIST = [
 - `--no-overlay`：关浮窗
 - `--no-push`：不推 VPS，只写本地 jsonl（无 VPS 时用这个）
 - `--ssh-host HOST`：覆盖默认 SSH host
+- `--allow-fullscreen-fallback`：【宽门】`-w` 找不到目标窗口 / `--auto-window` 检测不到前台时，fallback 截全屏。**默认是窄门**：直接 skip 那一帧，不全屏 —— 防 AI 看到不该看的桌面/聊天/银行窗口。只有"我不在乎隐私、全屏数据更值"的场景才开。
 
 ---
 

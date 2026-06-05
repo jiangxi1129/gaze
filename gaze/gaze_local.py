@@ -256,6 +256,10 @@ _SSH_HOST = os.environ.get('GAZE_SSH_HOST', 'your-vps')
 _VPS_PUSH_SCRIPT = os.environ.get('GAZE_VPS_SCRIPT', '/root/mcp-memory-server/push_caption.py')
 _VPS_SNAP_PATH = os.environ.get('GAZE_VPS_SNAP_PATH', '/tmp/gaze_latest.jpg')
 _NO_PUSH = False  # main() 会根据 --no-push 翻起来
+# ── 窄门 default：-w 找不到窗口 / auto-window 前台 detection 失败 → skip 不 fallback 全屏 ──
+# 设计来源：用户用 -w 指定窗口 = 显式说"只看这个"，找不到时 fallback 全屏 = 隐私泄露
+# 想回旧行为（找不到就乱截桌面）：启动加 --allow-fullscreen-fallback
+_ALLOW_FULLSCREEN_FALLBACK = False
 
 
 def push_snap_async(img, ssh_host: str = None, quality: int = 85):
@@ -758,11 +762,31 @@ def run(
                     actual_window = normalize_window_key(fg_title)
                     window_for_screenshot = fg_title
                 else:
+                    # 🚪 窄门：auto-window 模式下前台 detection 失败（桌面/未知窗口）→ 默认 skip
+                    if not _ALLOW_FULLSCREEN_FALLBACK:
+                        if not fallback_announced:
+                            ts_w = datetime.now().strftime('%H:%M:%S')
+                            print(f"  [{ts_w}] 🚪 auto-window 检测不到前台窗口，skip 不全屏（防隐私泄露；--allow-fullscreen-fallback 回旧行为）")
+                            fallback_announced = True
+                        overlay_state['paused'] = True
+                        overlay_state['window'] = '? unknown'
+                        time.sleep(ocr_interval if ocr_enabled else interval)
+                        continue
                     actual_window = None
                     window_for_screenshot = None
             elif window:
                 hwnd = _find_window(window)
                 if not hwnd:
+                    # 🚪 窄门：-w 显式指定窗口 + 找不到 → 默认 skip 不 fallback 全屏
+                    if not _ALLOW_FULLSCREEN_FALLBACK:
+                        if not fallback_announced:
+                            ts_w = datetime.now().strftime('%H:%M:%S')
+                            print(f"  [{ts_w}] 🚪 找不到窗口『{window}』，skip 不全屏（防截到桌面/微信；--allow-fullscreen-fallback 回旧行为）")
+                            fallback_announced = True
+                        overlay_state['paused'] = True
+                        overlay_state['window'] = f'? {window[:20]}'
+                        time.sleep(ocr_interval if ocr_enabled else interval)
+                        continue
                     actual_window = None
                     window_for_screenshot = None
                     if not fallback_announced:
@@ -777,9 +801,9 @@ def run(
                     # P: 归一化 (用 -w 时也走归一化，避免手填的标题被截 tab 变化)
                     actual_window = normalize_window_key(window)
 
-            # 截屏（找不到窗口自动 fallback 全屏，不卡住）
+            # 截屏（窄门 default：找不到窗口直接抛错→ 走 except 跳过这一轮；--allow-fullscreen-fallback 才会真截桌面）
             try:
-                img = screenshot(window_for_screenshot, fallback_to_fullscreen=True)
+                img = screenshot(window_for_screenshot, fallback_to_fullscreen=_ALLOW_FULLSCREEN_FALLBACK)
                 # 应用 crop 裁掉 browser UI 等敏感区域
                 if crop_top > 0 or crop_bottom > 0:
                     img = crop_borders(img, top=crop_top, bottom=crop_bottom)
@@ -881,14 +905,20 @@ def main():
                         help='不推到 VPS，只写本地 ~/.gaze/logs/*.jsonl（离线模式，无 VPS 时用）')
     parser.add_argument('--ssh-host',
                         help='VPS SSH host（覆盖 $GAZE_SSH_HOST 环境变量，默认 your-vps）')
+    parser.add_argument('--allow-fullscreen-fallback', action='store_true',
+                        help='【宽门】-w 找不到目标窗口 / auto-window 检测不到前台时，fallback 截全屏。'
+                             '默认（窄门）= 直接 skip 那一帧，防 AI 看到不该看的桌面/聊天窗口。'
+                             '只有"我不在乎隐私，全屏数据更值"的场景才开。')
     args = parser.parse_args()
 
-    # --no-push / --ssh-host 翻起全局开关
-    global _NO_PUSH, _SSH_HOST
+    # --no-push / --ssh-host / --allow-fullscreen-fallback 翻起全局开关
+    global _NO_PUSH, _SSH_HOST, _ALLOW_FULLSCREEN_FALLBACK
     if args.no_push:
         _NO_PUSH = True
     if args.ssh_host:
         _SSH_HOST = args.ssh_host
+    if args.allow_fullscreen_fallback:
+        _ALLOW_FULLSCREEN_FALLBACK = True
 
     if args.list_windows:
         windows = list_windows()
