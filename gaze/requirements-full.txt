@@ -1,0 +1,8 @@
+# 完整版（最小版 + 音频字幕 Whisper）
+-r requirements-min.txt
+
+# 音频字幕：抓 Windows 系统声音 → faster-whisper 转字幕
+# 仅 Windows，需要 WASAPI loopback（Win10/11 自带）
+# 模型首次启动会下载（tiny 约 75MB，base 约 145MB）
+pyaudiowpatch>=0.2.12
+faster-whisper>=1.0
