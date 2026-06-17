@@ -176,13 +176,27 @@ _WINDOW_BLACKLIST = [
     'gaze_local', 'gaze_launcher',
 ]
 
+# ─── window 白名单：优先级高于黑名单（命中即放行）───────────────
+# 用法：标题里含 "微信" 通常 = 私聊（黑名单 skip）；但 "微信视频号" 含 "视频号" → 公开内容放行
+# 加一条意味着"即使标题里有黑名单关键词，只要也含这个白名单子串，就允许截"
+_WINDOW_ALLOWLIST = [
+    '视频号',      # 微信视频号（公开短视频）
+    '小程序',      # 微信小程序（部分公开应用）
+    'Mini Program',
+]
+
 
 def _is_window_blacklisted(title: str) -> bool:
-    """检测窗口标题是否在黑名单"""
+    """检测窗口标题是否在黑名单。白名单子串优先放行。"""
     if not title:
         return False
+    title_lower = title.lower()
+    # 白名单优先：命中即放行（即使也撞了黑名单）
+    for kw in _WINDOW_ALLOWLIST:
+        if kw.lower() in title_lower:
+            return False
     for kw in _WINDOW_BLACKLIST:
-        if kw.lower() in title.lower():
+        if kw.lower() in title_lower:
             return True
     return False
 
