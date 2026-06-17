@@ -477,6 +477,9 @@ def run(
     ocr_pushes = 0
     audio_pushes = 0
     fallback_announced = False
+    # 套娃保护：记下上次"有效"前台窗口，命中 anti-recursion 时沿用
+    last_valid_fg_title = None
+    recursion_stuck_announced = False
     # 用于 caption thread 跟主循环通信的共享状态
     cap_state = {
         'last_caption': None,   # 上一次 caption 文本 (给 B 用)
@@ -792,15 +795,28 @@ def run(
                 if fg:
                     fg_title, _ = fg
                     # ♾️ 套娃保护：gaze 自己 / AI 桌面客户端永远不截（即使 --no-blacklist 也拦）
+                    # 命中时沿用 last_valid_fg_title 继续截（防"鼠标放在浮窗上就卡住"）
                     if _is_recursion_window(fg_title):
-                        if not fallback_announced:
+                        if last_valid_fg_title and not _is_recursion_window(last_valid_fg_title):
+                            # 沿用上次有效窗口
                             ts_w = datetime.now().strftime('%H:%M:%S')
-                            print(f"  [{ts_w}] ♾️ 套娃窗口『{fg_title[:30]}』，跳过截屏（_WINDOW_ANTI_RECURSION 命中）")
-                            fallback_announced = True
-                        overlay_state['paused'] = True
-                        overlay_state['window'] = f'♾️ {fg_title[:25]}'
-                        time.sleep(ocr_interval if ocr_enabled else interval)
-                        continue
+                            if not recursion_stuck_announced:
+                                print(f"  [{ts_w}] ♾️ 套娃窗口『{fg_title[:20]}』，沿用上次有效窗口『{last_valid_fg_title[:25]}』")
+                                recursion_stuck_announced = True
+                            fg_title = last_valid_fg_title  # 继续按 last_valid 走下面的逻辑
+                        else:
+                            # 没有上次有效窗口可沿用 → skip
+                            if not fallback_announced:
+                                ts_w = datetime.now().strftime('%H:%M:%S')
+                                print(f"  [{ts_w}] ♾️ 套娃窗口『{fg_title[:30]}』，跳过截屏（无上次窗口可沿用）")
+                                fallback_announced = True
+                            overlay_state['paused'] = True
+                            overlay_state['window'] = f'♾️ {fg_title[:25]}'
+                            time.sleep(ocr_interval if ocr_enabled else interval)
+                            continue
+                    else:
+                        recursion_stuck_announced = False
+                        last_valid_fg_title = fg_title  # 记下来，套娃时沿用
                     # 🔒 隐私保护：黑名单窗口 → 跳过这一轮
                     # --no-blacklist 时跳过黑名单检查（信任前台模式）
                     if (not _NO_BLACKLIST) and _is_window_blacklisted(fg_title):
