@@ -307,6 +307,37 @@ _ALLOW_FULLSCREEN_FALLBACK = False
 # 适用场景：玩视频号、看微信公众号 PDF、Outlook 看公开邮件等。注意：不要在桌面跑财务/密码时开。
 _NO_BLACKLIST = False
 
+# ── 字幕 ROI（团子翻译器风格：固定区域单独 OCR + 放大 2x）──
+# 视频字幕位置固定（B 站/视频号底部中间），框出来单独 OCR + 放大能让字符变大、躲开 UI noise
+# 模式：None=关；'bottom'=底部 25%；'bottom-narrow'=底部 12.5%；'x,y,w,h'=自定义像素
+_SUBTITLE_ROI_MODE = None
+
+
+def _crop_subtitle_roi(img, mode):
+    """根据 mode 从图片 crop 字幕区域 + 放大 2x。None mode → 返回 None"""
+    if not mode or mode == 'off':
+        return None
+    from PIL import Image as _PIL_Image
+    w, h = img.size
+    try:
+        if mode == 'bottom':
+            box = (0, int(h * 0.75), w, h)             # 底部 25%
+        elif mode == 'bottom-narrow':
+            box = (0, int(h * 0.875), w, h)            # 底部 12.5%
+        elif mode == 'top':
+            box = (0, 0, w, int(h * 0.25))             # 顶部 25%（PIP 字幕）
+        elif ',' in mode:
+            x, y, rw, rh = [int(s) for s in mode.split(',')]
+            box = (x, y, x + rw, y + rh)
+        else:
+            return None
+        cropped = img.crop(box)
+        new_size = (cropped.size[0] * 2, cropped.size[1] * 2)
+        cropped = cropped.resize(new_size, _PIL_Image.LANCZOS)
+        return cropped
+    except Exception:
+        return None
+
 
 def push_snap_async(img, ssh_host: str = None, quality: int = 85):
     """异步 scp 一张高清 JPG 到 VPS (供 AI 主动调拿高清图用)
@@ -597,6 +628,35 @@ def run(
                 with prev_texts_lock:
                     prev_texts.clear()
                     prev_texts.extend(curr_texts)
+
+                # 📐 字幕 ROI OCR（团子翻译器风格）：固定区域单独 OCR + 放大 2x
+                if _SUBTITLE_ROI_MODE:
+                    roi_img = _crop_subtitle_roi(img, _SUBTITLE_ROI_MODE)
+                    if roi_img is not None:
+                        try:
+                            roi_texts = ocr_image(roi_img, max_size=ocr_max_size * 2)
+                            if roi_texts:
+                                roi_joined = join_text_lines(roi_texts, max_len=200)
+                                last_sub = ocr_state.get('last_subtitle_text', '')
+                                if roi_joined and roi_joined != last_sub:
+                                    ocr_state['last_subtitle_text'] = roi_joined
+                                    now_iso = datetime.now().isoformat()
+                                    ts = datetime.now().strftime('%H:%M:%S')
+                                    push_ok, push_msg = push_to_vps({
+                                        'source': 'ocr',
+                                        'caption': f'[字幕] {roi_joined}',
+                                        'ts': now_iso,
+                                        'window': window_ or 'fullscreen',
+                                    })
+                                    tag = '→' if push_ok else f'×{push_msg[:15]}'
+                                    print(f"  [{ts}] [字幕] {roi_joined[:80]}  {tag}")
+                                    if push_ok:
+                                        ocr_pushes += 1
+                                        overlay_state['ocr_count'] += 1
+                                        overlay_state['push_success_count'] += 1
+                                        overlay_state['last_push_ts'] = time.time()
+                        except Exception as e:
+                            print(f"  ⚠️ subtitle ROI OCR err: {type(e).__name__}: {e}")
             except Exception as e:
                 print(f"  ⚠️ OCR err: {type(e).__name__}: {e}")
 
@@ -987,17 +1047,27 @@ def main():
                              '场景：玩微信视频号、看公众号 PDF 等 —— 你知道自己在干啥别拦你。'
                              '⚠️ 别在桌面跑财务 / 密码管理器的时候开。')
     parser.add_argument('--video-mode', action='store_true',
-                        help='🎬 视频模式 preset：caption interval=5s + style=video（兼顾对白和说话者）。'
-                             '看 AI 短剧/电影/视频号时一键开。覆盖 -i 和 -s。')
+                        help='🎬 视频模式 preset：caption 3s + style=video + 字幕 ROI=bottom（团子翻译器风格，框选底部 25% 单独 OCR）')
+    parser.add_argument('--subtitle-roi', default=None,
+                        help='📐 字幕 ROI（团子翻译器风格）：固定区域单独 OCR + 放大 2x，专治视频字幕识别差。'
+                             '选项：off / bottom（底部 25%）/ bottom-narrow（底部 12.5%）/ top / x,y,w,h（自定义像素）')
     args = parser.parse_args()
 
-    # --video-mode preset：覆盖 interval + style
-    # 6/18 v2: caption 是视频场景主力，频率拉高；OCR 是噪音保持但不密集
+    # --video-mode preset：覆盖 interval + style + subtitle-roi
+    # 6/18 v3: caption 主力 + 底部字幕区域单独 OCR 放大（团子翻译器风格）
     if args.video_mode:
         args.interval = 3      # caption 3s (静止帧 K 自适应会自动延长省 token)
         args.style = 'video'
-        args.ocr_interval = max(args.ocr_interval, 4.0)  # OCR 4s—— 让算力让给 caption
-        print('🎬 --video-mode: caption 3s + style=video + OCR 4s（caption 主力，OCR 辅助）')
+        args.ocr_interval = max(args.ocr_interval, 4.0)
+        if not args.subtitle_roi:
+            args.subtitle_roi = 'bottom'
+        print(f'🎬 --video-mode: caption 3s + style=video + OCR 4s + subtitle-roi={args.subtitle_roi}')
+
+    # --subtitle-roi 翻起全局
+    if args.subtitle_roi and args.subtitle_roi != 'off':
+        global _SUBTITLE_ROI_MODE
+        _SUBTITLE_ROI_MODE = args.subtitle_roi
+        print(f'📐 字幕 ROI: {args.subtitle_roi}（区域单独 OCR + 放大 2x，团子翻译器风格）')
 
     # --no-push / --ssh-host / --allow-fullscreen-fallback / --no-blacklist 翻起全局开关
     global _NO_PUSH, _SSH_HOST, _ALLOW_FULLSCREEN_FALLBACK, _NO_BLACKLIST
