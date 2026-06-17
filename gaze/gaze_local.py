@@ -854,29 +854,17 @@ def run(
                 fg = get_foreground_window()
                 if fg:
                     fg_title, _ = fg
-                    # ♾️ 套娃保护：gaze 自己 / AI 桌面客户端永远不截（即使 --no-blacklist 也拦）
-                    # 命中时沿用 last_valid_fg_title 继续截（防"鼠标放在浮窗上就卡住"）
+                    # ♾️ 套娃保护 v2：命中 → skip（不沿用 last_valid，因为 PrintWindow 抓的画面跟 fg_title 不一定一致，沿用 last_valid 反而漏抓 AI 窗口画面）
+                    # 防"鼠标 hover 浮窗就卡住"的责任移给 gaze_overlay.py 的 Win32 WS_EX_NOACTIVATE（浮窗不抢前台焦点）
                     if _is_recursion_window(fg_title):
-                        if last_valid_fg_title and not _is_recursion_window(last_valid_fg_title):
-                            # 沿用上次有效窗口
+                        if not fallback_announced:
                             ts_w = datetime.now().strftime('%H:%M:%S')
-                            if not recursion_stuck_announced:
-                                print(f"  [{ts_w}] ♾️ 套娃窗口『{fg_title[:20]}』，沿用上次有效窗口『{last_valid_fg_title[:25]}』")
-                                recursion_stuck_announced = True
-                            fg_title = last_valid_fg_title  # 继续按 last_valid 走下面的逻辑
-                        else:
-                            # 没有上次有效窗口可沿用 → skip
-                            if not fallback_announced:
-                                ts_w = datetime.now().strftime('%H:%M:%S')
-                                print(f"  [{ts_w}] ♾️ 套娃窗口『{fg_title[:30]}』，跳过截屏（无上次窗口可沿用）")
-                                fallback_announced = True
-                            overlay_state['paused'] = True
-                            overlay_state['window'] = f'♾️ {fg_title[:25]}'
-                            time.sleep(ocr_interval if ocr_enabled else interval)
-                            continue
-                    else:
-                        recursion_stuck_announced = False
-                        last_valid_fg_title = fg_title  # 记下来，套娃时沿用
+                            print(f"  [{ts_w}] ♾️ 套娃窗口『{fg_title[:30]}』，skip 不截（防截到 AI 客户端）")
+                            fallback_announced = True
+                        overlay_state['paused'] = True
+                        overlay_state['window'] = f'♾️ {fg_title[:25]}'
+                        time.sleep(ocr_interval if ocr_enabled else interval)
+                        continue
                     # 🔒 隐私保护：黑名单窗口 → 跳过这一轮
                     # --no-blacklist 时跳过黑名单检查（信任前台模式）
                     if (not _NO_BLACKLIST) and _is_window_blacklisted(fg_title):

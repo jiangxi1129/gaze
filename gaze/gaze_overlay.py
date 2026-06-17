@@ -66,8 +66,34 @@ class GazeOverlay:
         self._build_ui()
         self._bind_events()
 
+        # 🪟 Win32: 让浮窗不抢前台焦点 + 不出现在 Alt+Tab
+        # 这样 gaze 主循环用 GetForegroundWindow 不会把浮窗误认为前台 → 不触发套娃保护
+        # 拖动 / 双击 / 右键菜单照常 work（NOACTIVATE 只阻止激活，不阻止鼠标事件）
+        self.root.after(100, self._apply_nonactivate_style)
+
         # 启动定时更新
         self.root.after(500, self._update_loop)
+
+    def _apply_nonactivate_style(self):
+        """给浮窗顶层 hwnd 设 WS_EX_NOACTIVATE + WS_EX_TOOLWINDOW（Win32 only）"""
+        try:
+            import ctypes
+            GWL_EXSTYLE = -20
+            WS_EX_NOACTIVATE = 0x08000000
+            WS_EX_TOOLWINDOW = 0x00000080
+            user32 = ctypes.windll.user32
+            hwnd = self.root.winfo_id()
+            # 爬到顶层窗口（Tkinter 上 winfo_id 常返回 inner child）
+            for _ in range(5):
+                parent = user32.GetParent(hwnd)
+                if not parent:
+                    break
+                hwnd = parent
+            if hwnd:
+                ex_style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+                user32.SetWindowLongW(hwnd, GWL_EXSTYLE, ex_style | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW)
+        except Exception:
+            pass  # 失败 silent
 
     def _build_ui(self):
         """构建 UI"""
