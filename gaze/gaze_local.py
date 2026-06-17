@@ -172,11 +172,36 @@ _WINDOW_BLACKLIST = [
     'Outlook', 'Mail',
     # cmd / 工具 (双保险)
     '命令提示符', 'Windows Terminal',
-    # gaze 自己 (避免无限套娃 — auto-window 跟到自己的浮窗/console 反复截自己)
-    'gaze_local', 'gaze_launcher',
-    '🫧 gaze',  # 浮窗 root.title (gaze_overlay.py:52)
-    '🫧',       # 兜底：浮窗标题独家 emoji，没别的窗口该含这个
+    # （gaze 自己 + 上游 AI 客户端窗口移到 _WINDOW_ANTI_RECURSION，--no-blacklist 也拦）
 ]
+
+
+# ─── 套娃保护：这些窗口永远不截（即使 --no-blacklist 也拦）─────────
+# gaze 看到 AI 客户端 → AI 看到 gaze 推的 OCR → AI 回的字又被 gaze 截 → loop
+# 这跟"隐私黑名单"是两回事，所以独立列表 + 独立函数，--no-blacklist 不影响它
+_WINDOW_ANTI_RECURSION = [
+    # gaze 自己
+    '🫧 gaze',          # 浮窗 root.title (gaze_overlay.py:52)
+    '🫧',               # 浮窗独家 emoji，没别的窗口该含
+    'gaze_local',       # gaze console
+    'gaze_launcher',    # 启动器
+    # AI 桌面 / IDE 客户端（gaze 截到 = AI 看自己回的话）
+    'Claude Code',      # Anthropic Claude Code 桌面 app
+    'Claude',           # 兜底（覆盖 "Claude" / "Claude Desktop" 等）
+    'Cursor',           # Cursor IDE
+    'Windsurf',         # Windsurf IDE
+]
+
+
+def _is_recursion_window(title: str) -> bool:
+    """套娃保护：gaze/AI 自己的窗口永远不截，--no-blacklist 也不放行"""
+    if not title:
+        return False
+    title_lower = title.lower()
+    for kw in _WINDOW_ANTI_RECURSION:
+        if kw.lower() in title_lower:
+            return True
+    return False
 
 # ─── window 白名单：优先级高于黑名单（命中即放行）───────────────
 # 用法：标题里含 "微信" 通常 = 私聊（黑名单 skip）；但 "微信视频号" 含 "视频号" → 公开内容放行
@@ -766,6 +791,16 @@ def run(
                 fg = get_foreground_window()
                 if fg:
                     fg_title, _ = fg
+                    # ♾️ 套娃保护：gaze 自己 / AI 桌面客户端永远不截（即使 --no-blacklist 也拦）
+                    if _is_recursion_window(fg_title):
+                        if not fallback_announced:
+                            ts_w = datetime.now().strftime('%H:%M:%S')
+                            print(f"  [{ts_w}] ♾️ 套娃窗口『{fg_title[:30]}』，跳过截屏（_WINDOW_ANTI_RECURSION 命中）")
+                            fallback_announced = True
+                        overlay_state['paused'] = True
+                        overlay_state['window'] = f'♾️ {fg_title[:25]}'
+                        time.sleep(ocr_interval if ocr_enabled else interval)
+                        continue
                     # 🔒 隐私保护：黑名单窗口 → 跳过这一轮
                     # --no-blacklist 时跳过黑名单检查（信任前台模式）
                     if (not _NO_BLACKLIST) and _is_window_blacklisted(fg_title):

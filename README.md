@@ -90,6 +90,8 @@ _WINDOW_BLACKLIST = [
 ```
 往里加自己的关键词（小写大写都行，模糊匹配）。`--auto-window` 切到匹配的窗口时直接 skip 那一轮，浮窗显示橙色 "🔒 黑名单"。
 
+**套娃保护（`_WINDOW_ANTI_RECURSION`，独立于黑名单）**：gaze 看 AI 客户端 → AI 看自己被 OCR 的话 → loop。这跟隐私保护是两件事，所以独立列表+独立函数。**`--no-blacklist` 也不能放行**。默认拦：`🫧 gaze` 浮窗、`Claude Code` / `Claude` 桌面 app、`Cursor` / `Windsurf` IDE。
+
 **白名单（黑名单优先级反转）**：模糊匹配会误伤——比如 `'微信'` 在黑名单里时，"微信视频号"标题也会被 skip（视频号其实是公开内容）。`_WINDOW_ALLOWLIST` 是子串白名单，**命中即放行，即使也撞了黑名单**：
 
 ```python
