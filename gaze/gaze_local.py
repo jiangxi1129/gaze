@@ -172,8 +172,10 @@ _WINDOW_BLACKLIST = [
     'Outlook', 'Mail',
     # cmd / 工具 (双保险)
     '命令提示符', 'Windows Terminal',
-    # gaze 自己 (避免无限套娃)
+    # gaze 自己 (避免无限套娃 — auto-window 跟到自己的浮窗/console 反复截自己)
     'gaze_local', 'gaze_launcher',
+    '🫧 gaze',  # 浮窗 root.title (gaze_overlay.py:52)
+    '🫧',       # 兜底：浮窗标题独家 emoji，没别的窗口该含这个
 ]
 
 # ─── window 白名单：优先级高于黑名单（命中即放行）───────────────
