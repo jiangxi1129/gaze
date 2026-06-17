@@ -992,10 +992,12 @@ def main():
     args = parser.parse_args()
 
     # --video-mode preset：覆盖 interval + style
+    # 6/18 v2: caption 是视频场景主力，频率拉高；OCR 是噪音保持但不密集
     if args.video_mode:
-        args.interval = 5
+        args.interval = 3      # caption 3s (静止帧 K 自适应会自动延长省 token)
         args.style = 'video'
-        print('🎬 --video-mode: caption interval=5s, style=video（兼顾对白+说话者）')
+        args.ocr_interval = max(args.ocr_interval, 4.0)  # OCR 4s—— 让算力让给 caption
+        print('🎬 --video-mode: caption 3s + style=video + OCR 4s（caption 主力，OCR 辅助）')
 
     # --no-push / --ssh-host / --allow-fullscreen-fallback / --no-blacklist 翻起全局开关
     global _NO_PUSH, _SSH_HOST, _ALLOW_FULLSCREEN_FALLBACK, _NO_BLACKLIST
