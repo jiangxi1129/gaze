@@ -122,6 +122,7 @@ _WINDOW_ALLOWLIST = [
 - `--ssh-host HOST`：覆盖默认 SSH host
 - `--allow-fullscreen-fallback`：【宽门】`-w` 找不到目标窗口 / `--auto-window` 检测不到前台时，fallback 截全屏。**默认是窄门**：直接 skip 那一帧，不全屏 —— 防 AI 看到不该看的桌面/聊天/银行窗口。只有"我不在乎隐私、全屏数据更值"的场景才开。
 - `--no-blacklist`：【信任前台模式】auto-window 时**整个关掉黑名单**。微信/银行/密码这些原本被拦的窗口都会被截。适用场景：玩微信视频号、看公众号 PDF —— 这些虽然挂在"微信"窗口下但是公开内容。⚠️ 别在开了财务 / 密码管理器的桌面跑这个。
+- `--video-mode`：🎬 看视频/短剧/电影 preset。一键开：`-i 5`（caption 频率从 10s → 5s）+ `-s video`（caption prompt 改成兼顾对白和说话者）。AI 短剧、Bilibili、视频号等场景用。默认的 `danmu` 模式假设 OCR 抓字幕、caption 描场景；但视频里花字/动画字 OCR 抓得乱，video 模式让 caption 也尝试引用清晰对白 + 指出说话者。
 
 ---
 

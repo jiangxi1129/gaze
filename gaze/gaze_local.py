@@ -948,8 +948,8 @@ def main():
                         help='caption 截屏间隔，秒 (default: 10)')
     parser.add_argument('--window', '-w', default=None,
                         help='窗口标题（模糊匹配，contains），不填 = 全屏')
-    parser.add_argument('--style', '-s', default='danmu', choices=['danmu', 'detailed'],
-                        help='caption 风格 (default: danmu)')
+    parser.add_argument('--style', '-s', default='danmu', choices=['danmu', 'detailed', 'video'],
+                        help='caption 风格 (default: danmu / video=兼顾对白，看视频时用)')
     parser.add_argument('--hash-threshold', type=int, default=4,
                         help='画面变化阈值 (default: 4)')
     parser.add_argument('--no-ocr', action='store_true',
@@ -986,7 +986,16 @@ def main():
                         help='【信任前台模式】auto-window 时不走黑名单。微信/银行/密码这些原本被拦的窗口都会被截。'
                              '场景：玩微信视频号、看公众号 PDF 等 —— 你知道自己在干啥别拦你。'
                              '⚠️ 别在桌面跑财务 / 密码管理器的时候开。')
+    parser.add_argument('--video-mode', action='store_true',
+                        help='🎬 视频模式 preset：caption interval=5s + style=video（兼顾对白和说话者）。'
+                             '看 AI 短剧/电影/视频号时一键开。覆盖 -i 和 -s。')
     args = parser.parse_args()
+
+    # --video-mode preset：覆盖 interval + style
+    if args.video_mode:
+        args.interval = 5
+        args.style = 'video'
+        print('🎬 --video-mode: caption interval=5s, style=video（兼顾对白+说话者）')
 
     # --no-push / --ssh-host / --allow-fullscreen-fallback / --no-blacklist 翻起全局开关
     global _NO_PUSH, _SSH_HOST, _ALLOW_FULLSCREEN_FALLBACK, _NO_BLACKLIST
