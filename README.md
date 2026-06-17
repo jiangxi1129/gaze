@@ -119,6 +119,7 @@ _WINDOW_ALLOWLIST = [
 - `--no-push`：不推 VPS，只写本地 jsonl（无 VPS 时用这个）
 - `--ssh-host HOST`：覆盖默认 SSH host
 - `--allow-fullscreen-fallback`：【宽门】`-w` 找不到目标窗口 / `--auto-window` 检测不到前台时，fallback 截全屏。**默认是窄门**：直接 skip 那一帧，不全屏 —— 防 AI 看到不该看的桌面/聊天/银行窗口。只有"我不在乎隐私、全屏数据更值"的场景才开。
+- `--no-blacklist`：【信任前台模式】auto-window 时**整个关掉黑名单**。微信/银行/密码这些原本被拦的窗口都会被截。适用场景：玩微信视频号、看公众号 PDF —— 这些虽然挂在"微信"窗口下但是公开内容。⚠️ 别在开了财务 / 密码管理器的桌面跑这个。
 
 ---
 

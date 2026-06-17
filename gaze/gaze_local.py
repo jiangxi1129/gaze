@@ -276,6 +276,11 @@ _NO_PUSH = False  # main() 会根据 --no-push 翻起来
 # 设计来源：用户用 -w 指定窗口 = 显式说"只看这个"，找不到时 fallback 全屏 = 隐私泄露
 # 想回旧行为（找不到就乱截桌面）：启动加 --allow-fullscreen-fallback
 _ALLOW_FULLSCREEN_FALLBACK = False
+# ── 黑名单全关开关（auto-window 模式用）──
+# 默认 False：auto-window 切到微信/银行/密码管理器等命中黑名单的窗口 → skip
+# True：auto-window 信任所有前台窗口都该截 —— "我知道自己在干啥别拦我"
+# 适用场景：玩视频号、看微信公众号 PDF、Outlook 看公开邮件等。注意：不要在桌面跑财务/密码时开。
+_NO_BLACKLIST = False
 
 
 def push_snap_async(img, ssh_host: str = None, quality: int = 85):
@@ -762,7 +767,8 @@ def run(
                 if fg:
                     fg_title, _ = fg
                     # 🔒 隐私保护：黑名单窗口 → 跳过这一轮
-                    if _is_window_blacklisted(fg_title):
+                    # --no-blacklist 时跳过黑名单检查（信任前台模式）
+                    if (not _NO_BLACKLIST) and _is_window_blacklisted(fg_title):
                         if not fallback_announced:
                             ts_w = datetime.now().strftime('%H:%M:%S')
                             print(f"  [{ts_w}] 🔒 黑名单窗口『{fg_title[:30]}』，跳过截屏保护隐私")
@@ -925,16 +931,23 @@ def main():
                         help='【宽门】-w 找不到目标窗口 / auto-window 检测不到前台时，fallback 截全屏。'
                              '默认（窄门）= 直接 skip 那一帧，防 AI 看到不该看的桌面/聊天窗口。'
                              '只有"我不在乎隐私，全屏数据更值"的场景才开。')
+    parser.add_argument('--no-blacklist', action='store_true',
+                        help='【信任前台模式】auto-window 时不走黑名单。微信/银行/密码这些原本被拦的窗口都会被截。'
+                             '场景：玩微信视频号、看公众号 PDF 等 —— 你知道自己在干啥别拦你。'
+                             '⚠️ 别在桌面跑财务 / 密码管理器的时候开。')
     args = parser.parse_args()
 
-    # --no-push / --ssh-host / --allow-fullscreen-fallback 翻起全局开关
-    global _NO_PUSH, _SSH_HOST, _ALLOW_FULLSCREEN_FALLBACK
+    # --no-push / --ssh-host / --allow-fullscreen-fallback / --no-blacklist 翻起全局开关
+    global _NO_PUSH, _SSH_HOST, _ALLOW_FULLSCREEN_FALLBACK, _NO_BLACKLIST
     if args.no_push:
         _NO_PUSH = True
     if args.ssh_host:
         _SSH_HOST = args.ssh_host
     if args.allow_fullscreen_fallback:
         _ALLOW_FULLSCREEN_FALLBACK = True
+    if args.no_blacklist:
+        _NO_BLACKLIST = True
+        print('⚠️  --no-blacklist: 黑名单已关。auto-window 会截所有前台窗口（包括聊天/银行/密码）。')
 
     if args.list_windows:
         windows = list_windows()
