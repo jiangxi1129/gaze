@@ -313,8 +313,24 @@ _NO_BLACKLIST = False
 _SUBTITLE_ROI_MODE = None
 
 
+def _load_roi_override():
+    """每帧 reload ~/.gaze/subtitle_roi.txt（picker 写的），存在则覆盖 mode。
+    ponytail: 每帧读文件 << OCR cost，不需要 mtime cache。"""
+    from pathlib import Path
+    f = Path.home() / '.gaze' / 'subtitle_roi.txt'
+    if f.exists():
+        try:
+            return f.read_text(encoding='utf-8').strip() or None
+        except Exception:
+            return None
+    return None
+
+
 def _crop_subtitle_roi(img, mode):
     """根据 mode 从图片 crop 字幕区域 + 放大 2x。None mode → 返回 None"""
+    override = _load_roi_override()
+    if override:
+        mode = override
     if not mode or mode == 'off':
         return None
     from PIL import Image as _PIL_Image

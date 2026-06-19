@@ -1,4 +1,4 @@
-"""gaze 实时浮窗 GUI — 边用电脑边能瞄一眼 gaze 抓到啥
+"""gaze 实时浮窗 GUI — 让你边用电脑边能瞄一眼 gaze 抓到啥
 
 设计：
 - Tkinter 半透明无边框窗口，always on top
@@ -81,9 +81,10 @@ class GazeOverlay:
             GWL_EXSTYLE = -20
             WS_EX_NOACTIVATE = 0x08000000
             WS_EX_TOOLWINDOW = 0x00000080
+            # 拿顶层窗口 hwnd：winfo_id() 在 Tkinter 上常常返回 inner child，要 GetParent 一两次
             user32 = ctypes.windll.user32
             hwnd = self.root.winfo_id()
-            # 爬到顶层窗口（Tkinter 上 winfo_id 常返回 inner child）
+            # 爬到顶层
             for _ in range(5):
                 parent = user32.GetParent(hwnd)
                 if not parent:
@@ -93,7 +94,7 @@ class GazeOverlay:
                 ex_style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
                 user32.SetWindowLongW(hwnd, GWL_EXSTYLE, ex_style | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW)
         except Exception:
-            pass  # 失败 silent
+            pass  # 失败 silent：浮窗仍能用，最多套娃 skip 多一点
 
     def _build_ui(self):
         """构建 UI"""
@@ -191,6 +192,8 @@ class GazeOverlay:
         self.menu.add_command(label='📸 立即推送一张高清快照', command=self._on_force_snap)
         self.menu.add_command(label='🔄 重置统计', command=self._on_reset_counters)
         self.menu.add_separator()
+        self.menu.add_command(label='📐 框选字幕区...', command=self._pick_subtitle_roi)
+        self.menu.add_separator()
         self.menu.add_command(label='✖  退出 gaze', command=self._on_right_click)
 
         for w in [self.root, self.title_bar, self.title_label, self.health_dot,
@@ -226,6 +229,83 @@ class GazeOverlay:
         self.state['audio_count'] = 0
         self.state['push_fail_count'] = 0
         self.state['push_success_count'] = 0
+
+    def _pick_subtitle_roi(self):
+        """📐 团子翻译器风格：全屏覆盖让用户拖框选字幕区。坐标写到 ~/.gaze/subtitle_roi.txt，gaze 主循环热加载。
+
+        关键：存的是**窗口相对坐标**（不是屏幕绝对坐标），因为 gaze 截图是 PrintWindow 抓窗口图，
+        窗口不在 (0,0) 起始时绝对坐标对不上。WS_EX_NOACTIVATE 让浮窗 right-click 不抢前台 → 这时
+        前台仍是用户的目标窗口（Bilibili / 微信视频号等），可以拿到它的 rect 做坐标转换。
+        """
+        from pathlib import Path
+        import ctypes
+        from ctypes import wintypes
+
+        # 1. 先拿目标窗口 rect（这时前台还是用户的目标窗口）
+        user32 = ctypes.windll.user32
+        target_hwnd = user32.GetForegroundWindow()
+        rect = wintypes.RECT()
+        user32.GetWindowRect(target_hwnd, ctypes.byref(rect))
+        target_x, target_y = rect.left, rect.top
+        target_w, target_h = rect.right - rect.left, rect.bottom - rect.top
+        target_title = ctypes.create_unicode_buffer(256)
+        user32.GetWindowTextW(target_hwnd, target_title, 256)
+        print(f'📐 picker: 目标窗口 「{target_title.value}」 位于 ({target_x},{target_y}) {target_w}x{target_h}')
+
+        self.root.withdraw()
+        picker = tk.Toplevel()
+        picker.attributes('-fullscreen', True)
+        picker.attributes('-alpha', 0.3)
+        picker.attributes('-topmost', True)
+        picker.configure(bg='black')
+        canvas = tk.Canvas(picker, bg='black', highlightthickness=0, cursor='crosshair')
+        canvas.pack(fill='both', expand=True)
+        tk.Label(picker, text='按住鼠标左键拖框选字幕区 · 松开保存 · ESC 取消',
+                 bg='black', fg='#ffaa00', font=(FONT_FAMILY, 16, 'bold')).place(relx=0.5, rely=0.05, anchor='n')
+        st = {'start': None, 'rect': None}
+
+        def press(e):
+            st['start'] = (e.x_root, e.y_root)
+            if st['rect']:
+                canvas.delete(st['rect'])
+
+        def drag(e):
+            if not st['start']:
+                return
+            if st['rect']:
+                canvas.delete(st['rect'])
+            # canvas 坐标 = e.x / e.y（窗口相对），全屏 picker 时窗口 = 屏幕
+            x0 = st['start'][0] - picker.winfo_rootx()
+            y0 = st['start'][1] - picker.winfo_rooty()
+            st['rect'] = canvas.create_rectangle(x0, y0, e.x, e.y, outline='#ffaa00', width=3)
+
+        def release(e):
+            if not st['start']:
+                return
+            x0, y0 = st['start']
+            x1, y1 = e.x_root, e.y_root
+            x_abs, y_abs = min(x0, x1), min(y0, y1)
+            w, h = abs(x1 - x0), abs(y1 - y0)
+            if w < 10 or h < 10:
+                picker.destroy(); self.root.deiconify(); return
+            # 转成目标窗口相对坐标（gaze 截的是窗口图，不是屏幕图）
+            x_rel = max(0, x_abs - target_x)
+            y_rel = max(0, y_abs - target_y)
+            roi_file = Path.home() / '.gaze' / 'subtitle_roi.txt'
+            roi_file.parent.mkdir(parents=True, exist_ok=True)
+            roi_file.write_text(f'{x_rel},{y_rel},{w},{h}\n', encoding='utf-8')
+            picker.destroy()
+            self.root.deiconify()
+            print(f'📐 字幕区已保存（相对 「{target_title.value}」）: {x_rel},{y_rel},{w},{h} → {roi_file}')
+
+        def esc(_e):
+            picker.destroy(); self.root.deiconify()
+
+        canvas.bind('<ButtonPress-1>', press)
+        canvas.bind('<B1-Motion>', drag)
+        canvas.bind('<ButtonRelease-1>', release)
+        picker.bind('<Escape>', esc)
+        picker.focus_force()
 
     def _on_drag_start(self, event):
         self.dragging = True
