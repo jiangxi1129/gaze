@@ -1,4 +1,4 @@
-"""gaze 实时浮窗 GUI — 让你边用电脑边能瞄一眼 gaze 抓到啥
+"""gaze 实时浮窗 GUI — 让息息边用电脑边能瞄一眼 gaze 抓到啥
 
 设计：
 - Tkinter 半透明无边框窗口，always on top
@@ -54,13 +54,13 @@ class GazeOverlay:
         self.root.overrideredirect(True)
         self.root.attributes('-topmost', True)
         self.root.attributes('-alpha', 0.88)
-        # 背景色：深灰偏紫（水母色调）
+        # 背景色：深灰偏紫（小澄的水母色调）
         self.root.configure(bg='#1a1a2e')
 
         # 默认位置：右下角
         sw = self.root.winfo_screenwidth()
         sh = self.root.winfo_screenheight()
-        w, h = 360, 180
+        w, h = 380, 240  # 加高放下新的"字幕"行
         self.root.geometry(f'{w}x{h}+{sw - w - 20}+{sh - h - 60}')
 
         self._build_ui()
@@ -135,7 +135,19 @@ class GazeOverlay:
         )
         self.status_label.pack(fill='x', pady=(0, 4))
 
-        # OCR 行
+        # 字幕 ROI 行（你框选那块的 OCR 专属，跟全屏 OCR 分开显示）
+        sub_row = tk.Frame(body, bg='#1a1a2e')
+        sub_row.pack(fill='x', pady=1)
+        tk.Label(sub_row, text='字幕', font=(FONT_FAMILY, 8, 'bold'),
+                 bg='#1a1a2e', fg='#ff8844', width=4, anchor='w').pack(side='left')
+        self.sub_label = tk.Label(
+            sub_row, text='—',
+            font=(FONT_FAMILY, 9, 'bold'), bg='#1a1a2e', fg='#ffaa66',
+            anchor='w', justify='left', wraplength=300,
+        )
+        self.sub_label.pack(side='left', fill='x', expand=True)
+
+        # OCR 行（全屏 OCR — 顶栏/UI 等 noise）
         ocr_row = tk.Frame(body, bg='#1a1a2e')
         ocr_row.pack(fill='x', pady=1)
         tk.Label(ocr_row, text='OCR', font=(FONT_FAMILY, 8, 'bold'),
@@ -239,10 +251,16 @@ class GazeOverlay:
         """
         from pathlib import Path
         import ctypes
+        import time
         from ctypes import wintypes
 
-        # 1. 先拿目标窗口 rect（这时前台还是用户的目标窗口）
+        # 先 hide 浮窗 + 等 fg 还回上一个窗口（防 right-click 时浮窗自己短暂成 fg）
         user32 = ctypes.windll.user32
+        self.root.withdraw()
+        self.root.update_idletasks()
+        time.sleep(0.25)
+
+        # 拿目标窗口 rect（fg 应该是用户在 right-click 之前看的那个窗口）
         target_hwnd = user32.GetForegroundWindow()
         rect = wintypes.RECT()
         user32.GetWindowRect(target_hwnd, ctypes.byref(rect))
@@ -291,12 +309,13 @@ class GazeOverlay:
             # 转成目标窗口相对坐标（gaze 截的是窗口图，不是屏幕图）
             x_rel = max(0, x_abs - target_x)
             y_rel = max(0, y_abs - target_y)
+            # ponytail: 单文件不带 key（key 验证有 normalize 不稳定 bug，去掉接受全窗口跑 ROI）
             roi_file = Path.home() / '.gaze' / 'subtitle_roi.txt'
             roi_file.parent.mkdir(parents=True, exist_ok=True)
             roi_file.write_text(f'{x_rel},{y_rel},{w},{h}\n', encoding='utf-8')
             picker.destroy()
             self.root.deiconify()
-            print(f'📐 字幕区已保存（相对 「{target_title.value}」）: {x_rel},{y_rel},{w},{h} → {roi_file}')
+            print(f'📐 字幕区已保存（相对 「{target_title.value[:30]}」 窗口）: {x_rel},{y_rel},{w},{h}')
 
         def esc(_e):
             picker.destroy(); self.root.deiconify()
@@ -397,7 +416,8 @@ class GazeOverlay:
                     else:
                         self.status_label.config(text=f'● {window[:30]}', fg='#7fdbff')
 
-                # OCR / Caption / Audio 最新一条
+                # 字幕 ROI / OCR / Caption / Audio 最新一条
+                self.sub_label.config(text=self._truncate(s.get('last_subtitle', '—')))
                 self.ocr_label.config(text=self._truncate(s.get('last_ocr', '')))
                 self.cap_label.config(text=self._truncate(s.get('last_cap', '')))
                 self.aud_label.config(text=self._truncate(s.get('last_audio', '')))

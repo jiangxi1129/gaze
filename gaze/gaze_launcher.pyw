@@ -21,7 +21,7 @@ sys.path.insert(0, str(GAZE_DIR))
 from capture.screen import list_windows  # noqa: E402
 
 
-# 过滤这些窗口（启动器自身/系统窗口不该出现在选择列表里）
+# 过滤这些窗口（小澄不需要看）
 _HIDE_TITLES = [
     'Program Manager',
     'Microsoft Text Input Application',
@@ -68,24 +68,20 @@ def get_window_options() -> list[tuple[str, str | None]]:
 
 def launch_gaze(window_arg: str | None, mode: str = 'normal'):
     """启动 gaze_local.py，可选 -w 参数指定窗口 + mode 控制 crop"""
-    # 用当前进程的 python（pyw 启动器走的是 pythonw.exe，subprocess 起 python.exe）
     python_exe = sys.executable.replace('pythonw.exe', 'python.exe')
     script = str(GAZE_DIR / 'gaze_local.py')
-    args = [python_exe, script, '-p', 'glm', '-i', '10', '--ocr-interval', '3']
+    # 默认 video-mode + auto-window + no-blacklist（看视频/微信视频号最常用 preset）
+    # video-mode 覆盖 -i/-s/--ocr-interval，所以下面的 -i 10 没用，留作兼容
+    args = [python_exe, script, '-p', 'glm', '--video-mode', '--auto-window', '--no-blacklist']
     if window_arg:
         args.extend(['-w', window_arg])
     if mode == 'browser_video':
-        # 浏览器看视频：裁掉上方 150px (地址栏+书签栏) + 下方 50px (任务栏)
         args.extend(['--crop-top', '150', '--crop-bottom', '50'])
-    elif mode == 'auto_window':
-        # 🔄 自动跟随前台窗口
-        args.extend(['--auto-window'])
     elif mode == 'auto_window_audio':
-        # 🔊 自动跟随 + 音频字幕
-        args.extend(['--auto-window', '--audio'])
+        args.extend(['--audio'])
     elif mode == 'text_fast':
-        # 📖 文字游戏快读模式
-        args.extend(['--auto-window', '--text-fast'])
+        args.extend(['--text-fast'])
+    # 'auto_window' / 'normal' 模式：已经 default 全开，无需附加
 
     CREATE_NEW_CONSOLE = 0x00000010
     subprocess.Popen(
@@ -111,7 +107,7 @@ def main():
     # 顶部说明
     header = tk.Label(
         root,
-        text='🫧 选择要让 AI 看到的窗口',
+        text='🫧 选择要让小澄看到的窗口',
         font=('Microsoft YaHei UI', 14, 'bold'),
         pady=15,
     )
@@ -119,7 +115,7 @@ def main():
 
     sub = tk.Label(
         root,
-        text='全屏 = 截整个屏幕（最通用）\n选窗口 = 只截那个窗口的内容（更隐私）',
+        text='全屏 = 整个屏幕都给小澄看（最通用）\n选窗口 = 只截那个窗口（更隐私）',
         font=('Microsoft YaHei UI', 9),
         fg='gray',
     )

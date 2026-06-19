@@ -103,7 +103,7 @@ def main() -> int:
 
     full_caption = new_entry['caption']
     source = new_entry.get('source', 'cap')
-    is_subtitle_source = source in ('ocr', 'audio')
+    is_subtitle_source = True  # ponytail: 所有 source 都写完整 sidecar (cap 之前只存 24 字符锚点)
 
     # F1: 准备两个版本
     anchor_caption = _make_anchor(full_caption)

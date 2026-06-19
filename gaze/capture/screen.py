@@ -37,7 +37,7 @@ def crop_borders(img: Image.Image, top: int = 0, bottom: int = 0, left: int = 0,
 
 def screenshot(
     window_title: str | None = None,
-    use_printwindow: bool = False,
+    use_printwindow: bool = False,  # ponytail: PrintWindow 对 Chrome 报错 size + 下半全黑，回 ImageGrab；用户看视频时 Chrome 本来就在前台不被遮，OK
     fallback_to_fullscreen: bool = True,
 ) -> Image.Image:
     """截屏。默认用 ImageGrab + 窗口 bbox（截到完整窗口含 overlay/对话框）。
@@ -62,11 +62,23 @@ def screenshot(
             return ImageGrab.grab(all_screens=False)
         raise ValueError(f"找不到窗口（标题含『{window_title}』）。试试 list_windows() 看可用窗口")
 
-    # PrintWindow 模式（默认禁用，对 OpenGL/DirectX overlay 拿不到内容）
+    # PrintWindow 模式（默认启用）
+    # ponytail: 对桌面 app work；对 Chrome 视频/GPU 加速层会拿到上 1/4 + 下面全黑 → 检测后 fallback ImageGrab
     if use_printwindow and _HAS_PYWIN32:
-        return _printwindow_capture(hwnd)
+        try:
+            img = _printwindow_capture(hwnd)
+            # 检测下 25% 是不是几乎全黑（Chrome GPU layer 截不到的特征）
+            h = img.size[1]
+            bottom_quarter = img.crop((0, h * 3 // 4, img.size[0], h))
+            extrema = bottom_quarter.convert('RGB').getextrema()
+            if all(c[1] < 10 for c in extrema):
+                pass  # 全黑 → PrintWindow 没拿到完整内容 → fall through
+            else:
+                return img
+        except Exception:
+            pass
 
-    # 默认 ImageGrab + GetWindowRect 整窗口 bbox（含 overlay / 对话框 / 边框）
+    # ImageGrab + GetWindowRect 整窗口 bbox（含 overlay / 对话框 / 边框）
     rect = wintypes.RECT()
     user32.GetWindowRect(hwnd, ctypes.byref(rect))
     if rect.right <= rect.left or rect.bottom <= rect.top:

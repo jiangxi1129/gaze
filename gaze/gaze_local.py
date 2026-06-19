@@ -34,6 +34,17 @@ try:
 except Exception:
     pass
 
+# Windows DPI awareness：必须在创建窗口/截屏前声明
+# 否则高 DPI 屏（>100% scaling）PrintWindow 只填上 1/4，下面全黑
+try:
+    import ctypes as _ctypes
+    try:
+        _ctypes.windll.shcore.SetProcessDpiAwareness(2)  # PER_MONITOR_DPI_AWARE
+    except Exception:
+        _ctypes.windll.user32.SetProcessDPIAware()
+except Exception:
+    pass
+
 from dotenv import load_dotenv
 
 # 加载 .env（先找当前目录再找 gaze 目录）
@@ -307,6 +318,9 @@ _ALLOW_FULLSCREEN_FALLBACK = False
 # 适用场景：玩视频号、看微信公众号 PDF、Outlook 看公开邮件等。注意：不要在桌面跑财务/密码时开。
 _NO_BLACKLIST = False
 
+# 全屏 OCR push 开关 — video-mode 翻 False 砍掉顶栏/标题 noise
+_PUSH_FULLSCREEN_OCR = True
+
 # ── 字幕 ROI（团子翻译器风格：固定区域单独 OCR + 放大 2x）──
 # 视频字幕位置固定（B 站/视频号底部中间），框出来单独 OCR + 放大能让字符变大、躲开 UI noise
 # 模式：None=关；'bottom'=底部 25%；'bottom-narrow'=底部 12.5%；'x,y,w,h'=自定义像素
@@ -314,8 +328,6 @@ _SUBTITLE_ROI_MODE = None
 
 
 def _load_roi_override():
-    """每帧 reload ~/.gaze/subtitle_roi.txt（picker 写的），存在则覆盖 mode。
-    ponytail: 每帧读文件 << OCR cost，不需要 mtime cache。"""
     from pathlib import Path
     f = Path.home() / '.gaze' / 'subtitle_roi.txt'
     if f.exists():
@@ -326,13 +338,18 @@ def _load_roi_override():
     return None
 
 
-def _crop_subtitle_roi(img, mode):
-    """根据 mode 从图片 crop 字幕区域 + 放大 2x。None mode → 返回 None"""
+def _crop_subtitle_roi(img, mode, current_window=None):
+    """mode 可以是 'bottom'/'x,y,w,h'/'<window_key>|x,y,w,h'.
+    带 window_key 时只在 current_window 含该 key 时 crop（防 ROI 跨窗口乱截）"""
     override = _load_roi_override()
     if override:
         mode = override
     if not mode or mode == 'off':
         return None
+    if '|' in mode:
+        target_key, mode = mode.split('|', 1)
+        if current_window and target_key.lower() not in current_window.lower():
+            return None
     from PIL import Image as _PIL_Image
     w, h = img.size
     try:
@@ -605,7 +622,7 @@ def run(
                 # 标记这张已 OCR
                 ocr_state['last_ocr_hash'] = hash_
 
-                if new_lines:
+                if new_lines and _PUSH_FULLSCREEN_OCR:
                     joined = join_text_lines(new_lines, max_len=200)
                     now_iso = datetime.now().isoformat()
                     ts = datetime.now().strftime('%H:%M:%S')
@@ -645,9 +662,9 @@ def run(
                     prev_texts.clear()
                     prev_texts.extend(curr_texts)
 
-                # 📐 字幕 ROI OCR（团子翻译器风格）：固定区域单独 OCR + 放大 2x
+                # 📐 字幕 ROI OCR：固定区域 + 放大 2x，传 window_ 防 ROI 跨窗口乱截
                 if _SUBTITLE_ROI_MODE:
-                    roi_img = _crop_subtitle_roi(img, _SUBTITLE_ROI_MODE)
+                    roi_img = _crop_subtitle_roi(img, _SUBTITLE_ROI_MODE, current_window=window_)
                     if roi_img is not None:
                         try:
                             roi_texts = ocr_image(roi_img, max_size=ocr_max_size * 2)
@@ -666,6 +683,7 @@ def run(
                                     })
                                     tag = '→' if push_ok else f'×{push_msg[:15]}'
                                     print(f"  [{ts}] [字幕] {roi_joined[:80]}  {tag}")
+                                    overlay_state['last_subtitle'] = roi_joined
                                     if push_ok:
                                         ocr_pushes += 1
                                         overlay_state['ocr_count'] += 1
@@ -735,18 +753,11 @@ def run(
                 with prev_texts_lock:
                     recent_ocr_texts = list(prev_texts[-6:]) if prev_texts else None
 
-                # B: 上下文化 — 传上一次 caption 给 prompt
-                last_cap = cap_state.get('last_caption')
-                if last_cap and hasattr(provider, 'caption_with_context'):
-                    caption = provider.caption_with_context(
-                        img_now, frames=frames, recent_ocr=recent_ocr_texts,
-                        last_caption=last_cap, style=style,
-                    )
-                elif len(frames) >= 2 and hasattr(provider, 'caption_multi_frame'):
-                    # D: 多帧融合
+                # 多帧 caption (描述变化) 但 last_caption=None 防锁死
+                if len(frames) >= 2 and hasattr(provider, 'caption_multi_frame'):
                     caption = provider.caption_multi_frame(
                         frames=frames, recent_ocr=recent_ocr_texts,
-                        last_caption=last_cap, style=style,
+                        last_caption=None, style=style,
                     )
                 else:
                     caption = provider.caption(img_now, style=style, recent_ocr=recent_ocr_texts)
@@ -1057,15 +1068,16 @@ def main():
                              '选项：off / bottom（底部 25%）/ bottom-narrow（底部 12.5%）/ top / x,y,w,h（自定义像素）')
     args = parser.parse_args()
 
-    # --video-mode preset：覆盖 interval + style + subtitle-roi
-    # 6/18 v3: caption 主力 + 底部字幕区域单独 OCR 放大（团子翻译器风格）
+    # --video-mode v5：CAP 描画面 + 字幕 ROI 抓字幕，分工不抢
     if args.video_mode:
-        args.interval = 3      # caption 3s (静止帧 K 自适应会自动延长省 token)
-        args.style = 'video'
+        args.interval = 3
+        args.style = 'danmu'  # CAP 专描画面（不引字幕）
         args.ocr_interval = max(args.ocr_interval, 4.0)
         if not args.subtitle_roi:
             args.subtitle_roi = 'bottom'
-        print(f'🎬 --video-mode: caption 3s + style=video + OCR 4s + subtitle-roi={args.subtitle_roi}')
+        global _PUSH_FULLSCREEN_OCR
+        _PUSH_FULLSCREEN_OCR = False
+        print(f'🎬 --video-mode: caption 3s (描画面) + 字幕 ROI={args.subtitle_roi} (抓字幕) + 全屏OCR关')
 
     # --subtitle-roi 翻起全局
     if args.subtitle_roi and args.subtitle_roi != 'off':
