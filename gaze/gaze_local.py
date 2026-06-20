@@ -623,7 +623,7 @@ def run(
                 ocr_state['last_ocr_hash'] = hash_
 
                 if new_lines and _PUSH_FULLSCREEN_OCR:
-                    joined = join_text_lines(new_lines, max_len=200)
+                    joined = join_text_lines(new_lines, max_len=1200)
                     now_iso = datetime.now().isoformat()
                     ts = datetime.now().strftime('%H:%M:%S')
                     push_ok, push_msg = push_to_vps({
@@ -669,7 +669,7 @@ def run(
                         try:
                             roi_texts = ocr_image(roi_img, max_size=ocr_max_size * 2)
                             if roi_texts:
-                                roi_joined = join_text_lines(roi_texts, max_len=200)
+                                roi_joined = join_text_lines(roi_texts, max_len=1200)
                                 last_sub = ocr_state.get('last_subtitle_text', '')
                                 if roi_joined and roi_joined != last_sub:
                                     ocr_state['last_subtitle_text'] = roi_joined
