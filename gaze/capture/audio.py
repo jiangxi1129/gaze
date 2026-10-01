@@ -15,6 +15,21 @@ import wave
 from io import BytesIO
 from typing import Callable
 
+
+MAX_NO_SPEECH_PROB = 0.55
+MIN_AVG_LOGPROB = -0.85
+MAX_COMPRESSION_RATIO = 2.2
+
+
+def audio_quality_ok(quality: dict | None) -> bool:
+    return bool(
+        quality
+        and quality.get('accepted') is True
+        and quality.get('no_speech_prob', 1.0) <= MAX_NO_SPEECH_PROB
+        and quality.get('avg_logprob', -99.0) >= MIN_AVG_LOGPROB
+        and quality.get('compression_ratio', 99.0) <= MAX_COMPRESSION_RATIO
+    )
+
 try:
     import pyaudiowpatch as pyaudio
     _HAS_PYAUDIO = True
@@ -32,7 +47,7 @@ class AudioTranscriber:
     """后台抓系统音频 + 实时转字幕
 
     用法：
-        t = AudioTranscriber(on_text=lambda txt, ts: print(txt))
+        t = AudioTranscriber(on_text=lambda txt, ts, quality: print(txt))
         t.start()
         # ... 主循环跑着 ...
         t.stop()
@@ -43,7 +58,7 @@ class AudioTranscriber:
         model_size: str = 'tiny',          # tiny / base / small (越大越准但越慢)
         chunk_seconds: float = 8.0,         # 每 N 秒切一段送 Whisper
         language: str = 'auto',             # 'zh' / 'en' / None (auto detect)
-        on_text: Callable[[str, str], None] | None = None,  # (text, ts_iso) -> None
+        on_text: Callable[[str, str, dict], None] | None = None,
         min_text_len: int = 3,
     ):
         if not _HAS_PYAUDIO:
@@ -54,7 +69,7 @@ class AudioTranscriber:
         self.model_size = model_size
         self.chunk_seconds = chunk_seconds
         self.language = None if language == 'auto' else language
-        self.on_text = on_text or (lambda t, ts: None)
+        self.on_text = on_text or (lambda t, ts, quality: None)
         self.min_text_len = min_text_len
 
         self._stop = threading.Event()
@@ -156,19 +171,40 @@ class AudioTranscriber:
                     wav_io,
                     language=self.language,
                     beam_size=1,         # tiny 模型 beam_size=1 快
+                    condition_on_previous_text=False,
                     vad_filter=True,      # voice activity detection 过滤静音
                     vad_parameters={'min_silence_duration_ms': 500},
                 )
                 texts = []
+                qualities = []
+                rejected = 0
                 for seg in segments:
                     t = seg.text.strip()
-                    if len(t) >= self.min_text_len:
+                    quality = {
+                        'no_speech_prob': float(seg.no_speech_prob),
+                        'avg_logprob': float(seg.avg_logprob),
+                        'compression_ratio': float(seg.compression_ratio),
+                    }
+                    quality['accepted'] = audio_quality_ok({'accepted': True, **quality})
+                    if len(t) >= self.min_text_len and quality['accepted']:
                         texts.append(t)
+                        qualities.append(quality)
+                    elif t and not quality['accepted']:
+                        rejected += 1
+                if rejected:   # 被质量门槛挡掉的不是悄悄没了：打一行，调门槛时有据可查
+                    print(f'[whisper] 丢掉 {rejected} 段低质量转写（像底噪/音乐/复读）')
                 if texts:
                     joined = ' '.join(texts)
                     ts_iso = datetime.fromtimestamp(captured_ts).isoformat()
+                    quality = {
+                        'accepted': True,
+                        'segments': len(qualities),
+                        'no_speech_prob': max(q['no_speech_prob'] for q in qualities),
+                        'avg_logprob': sum(q['avg_logprob'] for q in qualities) / len(qualities),
+                        'compression_ratio': max(q['compression_ratio'] for q in qualities),
+                    }
                     try:
-                        self.on_text(joined, ts_iso)
+                        self.on_text(joined, ts_iso, quality)
                     except Exception as e:
                         print(f'[whisper] callback err: {e}')
             except Exception as e:

@@ -16,13 +16,25 @@ from PIL import Image
 from .base import CaptionProvider, PROMPTS
 
 
+def _raise_api_error(response) -> None:
+    if response.status_code < 400:
+        return
+    try:
+        error = response.json().get('error', {})
+        code = error.get('code', '?')
+        message = error.get('message', '请求失败')
+    except Exception:
+        response.raise_for_status()
+    raise RuntimeError(f'GLM HTTP {response.status_code}/{code}: {message}')
+
+
 class GLMCaptioner(CaptionProvider):
     name = "glm-4v-flash"
 
     def __init__(
         self,
         api_key: str | None = None,
-        model: str = "glm-4v-flash",  # 免费、便宜、最少 token
+        model: str = "glm-4v-flash",  # 免费单图模型
         # 备选: glm-4v-plus (更详细) / glm-4v (中等)
         # 注意: glm-5v-turbo 是 reasoning 模型，需要 max_tokens >= 500
         endpoint: str = "https://open.bigmodel.cn/api/paas/v4/chat/completions",
@@ -83,7 +95,7 @@ class GLMCaptioner(CaptionProvider):
 
         with httpx.Client(timeout=self.timeout) as client:
             r = client.post(self.endpoint, json=payload, headers=headers)
-            r.raise_for_status()
+            _raise_api_error(r)
             data = r.json()
 
         text = data['choices'][0]['message']['content']
@@ -137,7 +149,7 @@ class GLMCaptioner(CaptionProvider):
 
         with httpx.Client(timeout=self.timeout) as client:
             r = client.post(self.endpoint, json=payload, headers=headers)
-            r.raise_for_status()
+            _raise_api_error(r)
             data = r.json()
 
         text = data['choices'][0]['message']['content']

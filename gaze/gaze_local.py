@@ -413,6 +413,11 @@ def push_to_vps(entry: dict, ssh_host: str = None, retries: int = 2) -> tuple[bo
     """
     if _NO_PUSH:
         return (False, 'no_push_mode')
+    # 音频转写质量不过关的（底噪、音乐被听成字、模型复读）不推，免得 AI 读到不存在的话
+    if entry.get('source') == 'audio':
+        from capture.audio import audio_quality_ok
+        if not audio_quality_ok(entry.get('quality')):
+            return (False, 'low_quality_audio_skipped')
     ssh_host = ssh_host or _SSH_HOST
     # ★ 过滤 console / 开发环境噪音
     caption = entry.get('caption', '')
@@ -566,6 +571,9 @@ def run(
     overlay_state = {
         'window': window or '(全屏)',
         'last_ocr': '',
+        'last_subtitle': '',
+        'subtitle_ocr_active': bool(_SUBTITLE_ROI_MODE),
+        'fullscreen_ocr_enabled': _PUSH_FULLSCREEN_OCR,
         'last_cap': '',
         'last_audio': '',
         'ocr_count': 0,
@@ -616,7 +624,8 @@ def run(
                 continue
 
             try:
-                curr_texts = ocr_image(img, max_size=ocr_max_size)
+                # video-mode 下全屏 OCR 不推，也就不必算（1080p 跑一次要 1-2 秒）
+                curr_texts = ocr_image(img, max_size=ocr_max_size) if _PUSH_FULLSCREEN_OCR else []
                 with prev_texts_lock:
                     new_lines = diff_new_text(prev_texts, curr_texts)
                 # 标记这张已 OCR
@@ -712,8 +721,18 @@ def run(
     def _caption_loop():
         nonlocal cap_fail_streak, cap_circuit_until, static_streak, current_interval
         last_hash_local: str | None = None
+        last_fg_title = ''
         while not cap_state['stop']:
-            time.sleep(current_interval)
+            # 分段睡（每段 ≤1 秒）：静止退避最长 120 秒，中间一切前台窗口就提前醒，不让人干等两分钟
+            waited = 0.0
+            while waited < current_interval and not cap_state['stop']:
+                step = min(1.0, current_interval - waited)
+                time.sleep(step)
+                waited += step
+                if last_fg_title:
+                    fg_now = get_foreground_window()
+                    if fg_now and fg_now[0] and fg_now[0] != last_fg_title:
+                        break   # 下面的前台比较会把退避清零
             if cap_state['stop']:
                 break
 
@@ -736,13 +755,22 @@ def run(
             img_now = frames[-1]
             cur_hash = cap_state.get('last_hash')
 
+            # 前台窗口一换就恢复正常节奏（场景肯定变了，别还按静止时的慢速等）
+            cur_fg = get_foreground_window()
+            cur_fg_title = cur_fg[0] if cur_fg else ''
+            if cur_fg_title:   # 取不到前台（桌面/被过滤的窗口）时不抹掉上一个有效基准
+                if last_fg_title and cur_fg_title != last_fg_title:
+                    static_streak = 0
+                    current_interval = float(interval)
+                last_fg_title = cur_fg_title
+
             # K: 画面静止时不仅跳过，还**延长**下一轮 sleep
             if last_hash_local and cur_hash and \
                hamming_distance(cur_hash, last_hash_local) < hash_threshold:
                 static_streak += 1
-                # 连续静止 3 次 = interval × 1.5；6 次 = × 2.5；上限 30s
+                # 连续静止 3 次 = interval × 1.5；6 次 = × 2.5；上限 120s（真静止就别白烧 API）
                 if static_streak >= 3:
-                    current_interval = min(30.0, float(interval) * (1.5 + (static_streak - 3) * 0.3))
+                    current_interval = min(120.0, float(interval) * (1.5 + (static_streak - 3) * 0.3))
                 continue
             else:
                 # 画面动了 → 重置 interval
@@ -763,6 +791,7 @@ def run(
                     caption = provider.caption(img_now, style=style, recent_ocr=recent_ocr_texts)
 
                 cap_state['last_caption'] = caption
+                overlay_state['cap_error'] = ''
 
                 now_iso = datetime.now().isoformat()
                 ts = datetime.now().strftime('%H:%M:%S')
@@ -799,6 +828,7 @@ def run(
             except Exception as e:
                 ts = datetime.now().strftime('%H:%M:%S')
                 err_str = str(e)[:60]
+                overlay_state['cap_error'] = err_str   # 浮窗上直接显示红字原因
                 print(f"  [{ts}] ❌ CAP API err: {type(e).__name__}: {err_str}")
                 # N: circuit breaker — 连续 3 次失败暂停 30s
                 cap_fail_streak += 1
@@ -820,7 +850,7 @@ def run(
         try:
             from capture.audio import AudioTranscriber
 
-            def _on_audio_text(text: str, ts_iso: str):
+            def _on_audio_text(text: str, ts_iso: str, quality: dict):
                 nonlocal audio_pushes
                 # 沿用当前 window 信息（auto_window 模式下用前台窗口名）
                 _aw = normalize_window_key(window) if window else None
@@ -833,6 +863,7 @@ def run(
                     'caption': f'[音频] {text}',
                     'ts': ts_iso,
                     'window': _aw or 'fullscreen',
+                    'quality': quality,
                 })
                 audio_pushes += 1
                 ts_short = ts_iso[11:19] if len(ts_iso) > 19 else ts_iso

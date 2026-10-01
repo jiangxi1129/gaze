@@ -1,4 +1,4 @@
-"""gaze 实时浮窗 GUI — 让息息边用电脑边能瞄一眼 gaze 抓到啥
+"""gaze 实时浮窗 GUI — 让你边用电脑边能瞄一眼 gaze 抓到啥
 
 设计：
 - Tkinter 半透明无边框窗口，always on top
@@ -24,6 +24,16 @@ from tkinter import font as tkfont
 
 # 字体（统一 Microsoft YaHei UI 中文显示好）
 FONT_FAMILY = 'Microsoft YaHei UI'
+
+
+def _ocr_display_state(state: dict) -> tuple[str, str]:
+    subtitle = state.get('last_subtitle') or (
+        '运行中 · 等待字幕' if state.get('subtitle_ocr_active') else '未启用'
+    )
+    fullscreen = state.get('last_ocr') or (
+        '运行中 · 等待文字' if state.get('fullscreen_ocr_enabled') else '已关闭（视频模式）'
+    )
+    return subtitle, fullscreen
 
 
 class GazeOverlay:
@@ -54,7 +64,7 @@ class GazeOverlay:
         self.root.overrideredirect(True)
         self.root.attributes('-topmost', True)
         self.root.attributes('-alpha', 0.88)
-        # 背景色：深灰偏紫（小澄的水母色调）
+        # 背景色：深灰偏紫
         self.root.configure(bg='#1a1a2e')
 
         # 默认位置：右下角
@@ -138,8 +148,8 @@ class GazeOverlay:
         # 字幕 ROI 行（你框选那块的 OCR 专属，跟全屏 OCR 分开显示）
         sub_row = tk.Frame(body, bg='#1a1a2e')
         sub_row.pack(fill='x', pady=1)
-        tk.Label(sub_row, text='字幕', font=(FONT_FAMILY, 8, 'bold'),
-                 bg='#1a1a2e', fg='#ff8844', width=4, anchor='w').pack(side='left')
+        tk.Label(sub_row, text='字幕 OCR', font=(FONT_FAMILY, 8, 'bold'),
+                 bg='#1a1a2e', fg='#ff8844', width=8, anchor='w').pack(side='left')
         self.sub_label = tk.Label(
             sub_row, text='—',
             font=(FONT_FAMILY, 9, 'bold'), bg='#1a1a2e', fg='#ffaa66',
@@ -150,8 +160,8 @@ class GazeOverlay:
         # OCR 行（全屏 OCR — 顶栏/UI 等 noise）
         ocr_row = tk.Frame(body, bg='#1a1a2e')
         ocr_row.pack(fill='x', pady=1)
-        tk.Label(ocr_row, text='OCR', font=(FONT_FAMILY, 8, 'bold'),
-                 bg='#1a1a2e', fg='#ffcc00', width=4, anchor='w').pack(side='left')
+        tk.Label(ocr_row, text='全屏 OCR', font=(FONT_FAMILY, 8, 'bold'),
+                 bg='#1a1a2e', fg='#ffcc00', width=8, anchor='w').pack(side='left')
         self.ocr_label = tk.Label(
             ocr_row, text='—',
             font=(FONT_FAMILY, 9), bg='#1a1a2e', fg='#dddddd',
@@ -406,6 +416,8 @@ class GazeOverlay:
                     self.status_label.config(text=f'🔒 黑名单：{window[:25]}', fg='#ff8866')
                 elif s.get('error'):
                     self.status_label.config(text=f'⚠️ {s.get("error", "")[:30]}', fg='#ff6666')
+                elif s.get('cap_error'):
+                    self.status_label.config(text=f'⚠️ 画面：{s["cap_error"][:32]}', fg='#ff6666')
                 elif s.get('cap_circuit_open'):
                     self.status_label.config(text=f'⏸ caption 限流中 ({window[:20]})', fg='#ffcc66')
                 else:
@@ -417,8 +429,9 @@ class GazeOverlay:
                         self.status_label.config(text=f'● {window[:30]}', fg='#7fdbff')
 
                 # 字幕 ROI / OCR / Caption / Audio 最新一条
-                self.sub_label.config(text=self._truncate(s.get('last_subtitle', '—')))
-                self.ocr_label.config(text=self._truncate(s.get('last_ocr', '')))
+                subtitle_text, fullscreen_text = _ocr_display_state(s)
+                self.sub_label.config(text=self._truncate(subtitle_text))
+                self.ocr_label.config(text=self._truncate(fullscreen_text))
                 self.cap_label.config(text=self._truncate(s.get('last_cap', '')))
                 self.aud_label.config(text=self._truncate(s.get('last_audio', '')))
 
